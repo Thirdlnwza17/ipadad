@@ -209,17 +209,17 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
     <div className="w-full max-w-xl mx-auto bg-white rounded-xl shadow-lg p-6 md:p-8">
       <div className="mb-6">
         <div className="flex items-center gap-4">
-          <div className="w-20 h-20 relative flex-shrink-0">
+          <div className="w-32 h-32 relative flex-shrink-0">
             <Image 
               src="/ram-logo.jpg" 
               alt="Ram Logo" 
               fill 
-              className="rounded-full object-cover border-2 border-white shadow-md"
-              sizes="80px"
+              className="object-contain"
+              sizes="128px"
             />
           </div>
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-blue-800">{`บันทึกการ${status}`}</h1>
+            <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-blue-500 to-blue-800 text-transparent bg-clip-text">{`บันทึกการ${status}`}</h1>
             <p className="text-gray-500">ระบบติดตามไอแพด</p>
           </div>
         </div>

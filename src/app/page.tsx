@@ -1,4 +1,6 @@
 "use client";
+import Swal from 'sweetalert2';
+/* Lines 2-11 omitted */
 
 import { useState, useEffect, ChangeEvent, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
@@ -49,45 +51,66 @@ export default function IPadTrackingSystem() {
   const itemsPerPage = 20;
 
   // Handle form submission for adding new department and tags
-  const handleAddDepartment = (e: React.FormEvent) => {
+  const handleAddDepartment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newDepartment.trim()) return;
 
-    // Persist to Firestore
-    (async () => {
+    const result = await Swal.fire({
+      title: 'ยืนยันการเพิ่มแผนก',
+      text: `คุณต้องการเพิ่มแผนก "${newDepartment}" ใช่หรือไม่?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'ใช่, เพิ่มแผนก',
+      cancelButtonText: 'ยกเลิก'
+    });
+
+    if (result.isConfirmed) {
       try {
         setSaveError(null);
         setSavingDept(true);
         await upsertIpadDepartment(newDepartment, []);
 
-        // Refresh departments list from DB
-        const depts = await getDepartmentsFromDB();
-        setDepartments(['ทั้งหมด', ...depts]);
+            // Refresh departments list from DB
+            const depts = await getDepartmentsFromDB();
+            setDepartments(['ทั้งหมด', ...depts]);
 
             // Refresh ipad docs used in management panel
-            try {
-              const docs = await getIpadDocs();
-              setIpadDocs(docs);
-            } catch {}
+            const docs = await getIpadDocs();
+            setIpadDocs(docs);
 
-        // also refresh tags for the selected/new department in UI
-        setNewDepartment('');
+            // also refresh tags for the selected/new department in UI
+            setNewDepartment('');
             setSelectedDeptForEdit(null);
             setShowAddForm(false);
+            
+            Swal.fire('สำเร็จ', 'เพิ่มแผนกเรียบร้อยแล้ว', 'success');
       } catch (err) {
         console.error('Error saving department:', err);
         setSaveError(err instanceof Error ? err.message : String(err));
+        Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถเพิ่มแผนกได้', 'error');
       } finally {
         setSavingDept(false);
       }
-    })();
-  };
-
-  // Toggle add form visibility
-  const toggleAddForm = () => {
-    setShowAddForm(!showAddForm);
+    }
+  };  // Toggle add form visibility
+  const toggleAddForm = async () => {
     if (!showAddForm) {
-  setNewDepartment('');
+      const result = await Swal.fire({
+        title: 'เพิ่มแผนกใหม่',
+        text: 'คุณต้องการเพิ่มแผนกใหม่ใช่หรือไม่?',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: 'ใช่, เพิ่มแผนก',
+        cancelButtonText: 'ยกเลิก'
+      });
+
+      if (result.isConfirmed) {
+        setShowAddForm(true);
+        setNewDepartment('');
+      }
+    } else {
+      setShowAddForm(false);
+      setNewDepartment('');
     }
   };
 
@@ -127,19 +150,33 @@ export default function IPadTrackingSystem() {
 
   // Handle tag removal (persist to Firestore if department present)
   const handleRemoveTag = async (tagToRemove: string) => {
-    // optimistically update UI
-    setTags(prev => prev.filter(tag => tag !== tagToRemove));
-    if (!newDepartment) return;
-    try {
-      setRemovingTag(tagToRemove);
-      await removeTagFromDepartment(newDepartment, tagToRemove);
-    } catch (e) {
-      console.error('Error removing tag from department:', e);
-      // rollback UI by re-adding tag if removal failed
-      setTags(prev => Array.from(new Set([...prev, tagToRemove])));
-      setSaveError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRemovingTag(null);
+    const result = await Swal.fire({
+      title: 'ยืนยันการลบแท็ก',
+      text: `คุณต้องการลบแท็ก "${tagToRemove}" ออกจากแผนกใช่หรือไม่?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'ใช่, ลบแท็ก',
+      cancelButtonText: 'ยกเลิก',
+      confirmButtonColor: '#d33'
+    });
+
+    if (result.isConfirmed) {
+      // optimistically update UI
+      setTags(prev => prev.filter(tag => tag !== tagToRemove));
+      if (!newDepartment) return;
+      try {
+        setRemovingTag(tagToRemove);
+        await removeTagFromDepartment(newDepartment, tagToRemove);
+        Swal.fire('สำเร็จ', 'ลบแท็กเรียบร้อยแล้ว', 'success');
+      } catch (e) {
+        console.error('Error removing tag from department:', e);
+        // rollback UI by re-adding tag if removal failed
+        setTags(prev => Array.from(new Set([...prev, tagToRemove])));
+        setSaveError(e instanceof Error ? e.message : String(e));
+        Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถลบแท็กได้', 'error');
+      } finally {
+        setRemovingTag(null);
+      }
     }
   };
 
@@ -165,51 +202,93 @@ export default function IPadTrackingSystem() {
 
   const handleAddSingleTag = async () => {
     if (!selectedDeptForEdit || !newSingleTag.trim()) return;
-    try {
-      await addTagToDepartment(selectedDeptForEdit, newSingleTag.trim());
-      const updated = await getTagsByDepartment(selectedDeptForEdit);
-      setTags(updated);
-      setNewSingleTag('');
-    } catch (e) {
-      console.error('Error adding tag:', e);
-      setSaveError(e instanceof Error ? e.message : String(e));
+    
+    const result = await Swal.fire({
+      title: 'ยืนยันการเพิ่มแท็ก',
+      text: `คุณต้องการเพิ่มแท็ก "${newSingleTag.trim()}" ให้กับแผนก "${selectedDeptForEdit}" ใช่หรือไม่?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'ใช่, เพิ่มแท็ก',
+      cancelButtonText: 'ยกเลิก'
+    });
+
+    if (result.isConfirmed) {
+      try {
+        await addTagToDepartment(selectedDeptForEdit, newSingleTag.trim());
+        const updated = await getTagsByDepartment(selectedDeptForEdit);
+        setTags(updated);
+        setNewSingleTag('');
+        Swal.fire('สำเร็จ', 'เพิ่มแท็กเรียบร้อยแล้ว', 'success');
+      } catch (e) {
+        console.error('Error adding tag:', e);
+        setSaveError(e instanceof Error ? e.message : String(e));
+        Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถเพิ่มแท็กได้', 'error');
+      }
     }
   };
 
   const handleRenameDepartment = async () => {
     if (!selectedDeptForEdit || !renamingTo.trim()) return;
-    try {
-      await renameIpadDepartment(selectedDeptForEdit, renamingTo.trim());
-      // refresh lists
-      const docs = await getIpadDocs();
-      setIpadDocs(docs);
-      const depts = await getDepartmentsFromDB();
-      setDepartments(['ทั้งหมด', ...depts]);
-      setSelectedDeptForEdit(null);
-      setNewDepartment('');
-      setRenamingTo('');
-      setTags([]);
-    } catch (e) {
-      console.error('Error renaming dept:', e);
-      setSaveError(e instanceof Error ? e.message : String(e));
+    
+    const result = await Swal.fire({
+      title: 'ยืนยันการเปลี่ยนชื่อแผนก',
+      text: `คุณต้องการเปลี่ยนชื่อแผนกจาก "${selectedDeptForEdit}" เป็น "${renamingTo.trim()}" ใช่หรือไม่?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'ใช่, เปลี่ยนชื่อ',
+      cancelButtonText: 'ยกเลิก'
+    });
+
+    if (result.isConfirmed) {
+      try {
+        await renameIpadDepartment(selectedDeptForEdit, renamingTo.trim());
+        // refresh lists
+        const docs = await getIpadDocs();
+        setIpadDocs(docs);
+        const depts = await getDepartmentsFromDB();
+        setDepartments(['ทั้งหมด', ...depts]);
+        setSelectedDeptForEdit(null);
+        setNewDepartment('');
+        setRenamingTo('');
+        setTags([]);
+        Swal.fire('สำเร็จ', 'เปลี่ยนชื่อแผนกเรียบร้อยแล้ว', 'success');
+      } catch (e) {
+        console.error('Error renaming dept:', e);
+        setSaveError(e instanceof Error ? e.message : String(e));
+        Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถเปลี่ยนชื่อแผนกได้', 'error');
+      }
     }
   };
 
   const handleDeleteDepartment = async () => {
     if (!selectedDeptForEdit) return;
-    if (!window.confirm(`คุณแน่ใจว่าจะลบแผนก "${selectedDeptForEdit}" และแท็กทั้งหมดในเอกสารนี้หรือไม่?`)) return;
-    try {
-      await deleteDepartment(selectedDeptForEdit);
-      const docs = await getIpadDocs();
-      setIpadDocs(docs);
-      const depts = await getDepartmentsFromDB();
-      setDepartments(['ทั้งหมด', ...depts]);
-      setSelectedDeptForEdit(null);
-      setNewDepartment('');
-      setTags([]);
-    } catch (e) {
-      console.error('Error deleting dept:', e);
-      setSaveError(e instanceof Error ? e.message : String(e));
+    
+    const result = await Swal.fire({
+      title: 'ยืนยันการลบแผนก',
+      text: `คุณแน่ใจว่าจะลบแผนก "${selectedDeptForEdit}" และแท็กทั้งหมดในเอกสารนี้หรือไม่?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'ใช่, ลบแผนก',
+      cancelButtonText: 'ยกเลิก',
+      confirmButtonColor: '#d33'
+    });
+
+    if (result.isConfirmed) {
+      try {
+        await deleteDepartment(selectedDeptForEdit);
+        const docs = await getIpadDocs();
+        setIpadDocs(docs);
+        const depts = await getDepartmentsFromDB();
+        setDepartments(['ทั้งหมด', ...depts]);
+        setSelectedDeptForEdit(null);
+        setNewDepartment('');
+        setTags([]);
+        Swal.fire('สำเร็จ', 'ลบแผนกเรียบร้อยแล้ว', 'success');
+      } catch (e) {
+        console.error('Error deleting dept:', e);
+        setSaveError(e instanceof Error ? e.message : String(e));
+        Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถลบแผนกได้', 'error');
+      }
     }
   };
 
@@ -863,26 +942,26 @@ export default function IPadTrackingSystem() {
           {showDeptSummary ? (
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gradient-to-r from-blue-600 to-sky-500 text-white">
+                <thead className="bg-gradient-to-r from-blue-100 to-sky-100">
                   <tr>
-                    <th className="px-4 py-3 text-left font-semibold">แผนก</th>
+                    <th className="px-4 py-3 text-left font-semibold border border-blue-200 text-blue-800">แผนก</th>
                     {/* Day columns 1..31 */}
                     {Array.from({ length: 31 }, (_, i) => (
-                      <th key={i} className="px-2 py-3 text-center text-sm font-semibold">{i + 1}</th>
+                      <th key={i} className="px-2 py-3 text-center text-sm font-semibold border border-blue-200 text-blue-800">{i + 1}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {departmentSummary.length === 0 ? (
                     <tr>
-                      <td colSpan={33} className="px-4 py-8 text-center text-gray-500">
+                      <td colSpan={33} className="px-4 py-8 text-center text-gray-500 border border-gray-200">
                         ไม่มีข้อมูล
                       </td>
                     </tr>
                   ) : (
                     departmentSummary.map((dept) => (
-                      <tr key={dept.department} className="border-b border-blue-50 hover:bg-blue-50 transition-colors">
-                        <td className="px-4 py-3 font-semibold text-blue-700">
+                      <tr key={dept.department} className="hover:bg-blue-50 transition-colors">
+                        <td className="px-4 py-3 font-semibold text-blue-700 border border-gray-200">
                           {dept.department}
                           {dept.tagCount > 0 && (
                             <span className="ml-2 text-xs font-normal text-gray-500">
@@ -892,7 +971,7 @@ export default function IPadTrackingSystem() {
                         </td>
                         {/* Render day counts (in/out badges) */}
                         {dept.days && dept.days.map((count, idx) => (
-                          <td key={idx} className="px-2 py-2 text-center text-sm text-gray-700">
+                          <td key={idx} className="px-2 py-2 text-center text-sm text-gray-700 border border-gray-200">
                             {count.in === 0 && count.out === 0 ? (
                               // render empty cell when both counts are zero
                               <span className="inline-block w-full h-full">&nbsp;</span>
@@ -917,15 +996,15 @@ export default function IPadTrackingSystem() {
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gradient-to-r from-blue-600 to-sky-500 text-white">
+                <table className="w-full border-collapse">
+                  <thead className="bg-gradient-to-r from-blue-100 to-sky-100">
                     <tr>
-                      <th className="px-4 py-3 text-left font-semibold">แท็กไอแพด</th>
-                      <th className="px-4 py-3 text-left font-semibold">รหัสพนักงาน</th>
-                      <th className="px-4 py-3 text-left font-semibold">แผนก</th>
-                      <th className="px-4 py-3 text-left font-semibold">สถานะ</th>
-                      <th className="px-4 py-3 text-left font-semibold">วันที่</th>
-                      <th className="px-4 py-3 text-left font-semibold">เวลา</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-800 border border-blue-200">แท็กไอแพด</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-800 border border-blue-200">รหัสพนักงาน</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-800 border border-blue-200">แผนก</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-800 border border-blue-200">สถานะ</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-800 border border-blue-200">วันที่</th>
+                      <th className="px-4 py-3 text-left font-semibold text-blue-800 border border-blue-200">เวลา</th>
                     </tr>
                   </thead>
                   <tbody>
