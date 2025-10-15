@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Filter, ArrowRight, ArrowLeft, Trash2, Plus, X, Download } from 'lucide-react';
 import Image from 'next/image';
 import BubbleBackground from '../components/BubbleBackground';
-import { getLogs, Log, getDepartmentsFromDB, deleteLogs, getTagsByDepartment } from '../dbService';
+import { getLogs, Log, getDepartmentsFromDB, deleteLogs, getTagsByDepartment, upsertIpadDepartment, removeTagFromDepartment, getIpadDocs, addTagToDepartment, renameIpadDepartment, deleteDepartment } from '../dbService';
 import { VercelDateRangePicker } from '../components/VercelDateRangePicker';
 import { isWithinInterval, parseISO } from 'date-fns';
 
@@ -38,8 +38,14 @@ export default function IPadTrackingSystem() {
   const [selectAllDept, setSelectAllDept] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newDepartment, setNewDepartment] = useState('');
-  const [newTags, setNewTags] = useState('');
+  const [savingDept, setSavingDept] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [tags, setTags] = useState<string[]>([]);
+  const [removingTag, setRemovingTag] = useState<string | null>(null);
+  const [ipadDocs, setIpadDocs] = useState<{ id: string; department?: string; tags?: string[] }[]>([]);
+  const [selectedDeptForEdit, setSelectedDeptForEdit] = useState<string | null>(null);
+  const [newSingleTag, setNewSingleTag] = useState('');
+  const [renamingTo, setRenamingTo] = useState('');
   const itemsPerPage = 20;
 
   // Handle form submission for adding new department and tags
@@ -47,37 +53,164 @@ export default function IPadTrackingSystem() {
     e.preventDefault();
     if (!newDepartment.trim()) return;
 
-    // Add new department if it doesn't exist
-    if (!departments.includes(newDepartment)) {
-      setDepartments(prev => [...prev, newDepartment]);
-    }
+    // Persist to Firestore
+    (async () => {
+      try {
+        setSaveError(null);
+        setSavingDept(true);
+        await upsertIpadDepartment(newDepartment, []);
 
-    if (newTags) {
-      const tagsToAdd = newTags.split(',').map(tag => tag.trim()).filter(Boolean);
-      const uniqueNewTags = tagsToAdd.filter(tag => !tags.includes(tag));
-      if (uniqueNewTags.length > 0) {
-        setTags(prev => [...prev, ...uniqueNewTags]);
+        // Refresh departments list from DB
+        const depts = await getDepartmentsFromDB();
+        setDepartments(['ทั้งหมด', ...depts]);
+
+            // Refresh ipad docs used in management panel
+            try {
+              const docs = await getIpadDocs();
+              setIpadDocs(docs);
+            } catch {}
+
+        // also refresh tags for the selected/new department in UI
+        setNewDepartment('');
+            setSelectedDeptForEdit(null);
+            setShowAddForm(false);
+      } catch (err) {
+        console.error('Error saving department:', err);
+        setSaveError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSavingDept(false);
       }
-    }
-
-    // Reset form
-    setNewDepartment('');
-    setNewTags('');
-    setShowAddForm(false);
+    })();
   };
 
   // Toggle add form visibility
   const toggleAddForm = () => {
     setShowAddForm(!showAddForm);
     if (!showAddForm) {
-      setNewDepartment('');
-      setNewTags('');
+  setNewDepartment('');
     }
   };
 
-  // Handle tag removal
-  const removeTag = (tagToRemove: string) => {
+  // When opening edit form or when newDepartment changes, load existing tags for that department
+  useEffect(() => {
+  if (!showAddForm) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!newDepartment) {
+          setTags([]);
+          return;
+        }
+        const existingTags = await getTagsByDepartment(newDepartment);
+        if (!cancelled) setTags(existingTags);
+      } catch (e) {
+        console.error('Error loading tags for dept:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showAddForm, newDepartment]);
+
+  // Load ipad docs for management panel
+  useEffect(() => {
+    if (!showAddForm) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const docs = await getIpadDocs();
+        if (!cancelled) setIpadDocs(docs);
+      } catch (e) {
+        console.error('Error loading ipad docs:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showAddForm]);
+
+  // Handle tag removal (persist to Firestore if department present)
+  const handleRemoveTag = async (tagToRemove: string) => {
+    // optimistically update UI
     setTags(prev => prev.filter(tag => tag !== tagToRemove));
+    if (!newDepartment) return;
+    try {
+      setRemovingTag(tagToRemove);
+      await removeTagFromDepartment(newDepartment, tagToRemove);
+    } catch (e) {
+      console.error('Error removing tag from department:', e);
+      // rollback UI by re-adding tag if removal failed
+      setTags(prev => Array.from(new Set([...prev, tagToRemove])));
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRemovingTag(null);
+    }
+  };
+
+  const handleSelectDeptForEdit = (dept?: string | null) => {
+    const name = dept || '';
+    setSelectedDeptForEdit(name || null);
+    setNewDepartment(name);
+    setRenamingTo(name);
+    // load tags
+    (async () => {
+      try {
+        if (!name) {
+          setTags([]);
+          return;
+        }
+        const t = await getTagsByDepartment(name);
+        setTags(t);
+      } catch (e) {
+        console.error('Error fetching tags for dept:', e);
+      }
+    })();
+  };
+
+  const handleAddSingleTag = async () => {
+    if (!selectedDeptForEdit || !newSingleTag.trim()) return;
+    try {
+      await addTagToDepartment(selectedDeptForEdit, newSingleTag.trim());
+      const updated = await getTagsByDepartment(selectedDeptForEdit);
+      setTags(updated);
+      setNewSingleTag('');
+    } catch (e) {
+      console.error('Error adding tag:', e);
+      setSaveError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleRenameDepartment = async () => {
+    if (!selectedDeptForEdit || !renamingTo.trim()) return;
+    try {
+      await renameIpadDepartment(selectedDeptForEdit, renamingTo.trim());
+      // refresh lists
+      const docs = await getIpadDocs();
+      setIpadDocs(docs);
+      const depts = await getDepartmentsFromDB();
+      setDepartments(['ทั้งหมด', ...depts]);
+      setSelectedDeptForEdit(null);
+      setNewDepartment('');
+      setRenamingTo('');
+      setTags([]);
+    } catch (e) {
+      console.error('Error renaming dept:', e);
+      setSaveError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleDeleteDepartment = async () => {
+    if (!selectedDeptForEdit) return;
+    if (!window.confirm(`คุณแน่ใจว่าจะลบแผนก "${selectedDeptForEdit}" และแท็กทั้งหมดในเอกสารนี้หรือไม่?`)) return;
+    try {
+      await deleteDepartment(selectedDeptForEdit);
+      const docs = await getIpadDocs();
+      setIpadDocs(docs);
+      const depts = await getDepartmentsFromDB();
+      setDepartments(['ทั้งหมด', ...depts]);
+      setSelectedDeptForEdit(null);
+      setNewDepartment('');
+      setTags([]);
+    } catch (e) {
+      console.error('Error deleting dept:', e);
+      setSaveError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   // Reset selections when logs change
@@ -467,7 +600,7 @@ export default function IPadTrackingSystem() {
             <form onSubmit={handleAddDepartment} className="space-y-4">
               <div>
                 <label htmlFor="department" className="block text-sm font-medium text-gray-700 mb-1">
-                  แผนก <span className="text-red-500">*</span>
+                  ชื่อแผนกใหม่ <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -478,24 +611,25 @@ export default function IPadTrackingSystem() {
                   placeholder=""
                   required
                 />
+                <div className="mt-2">
+                  <label className="block text-sm text-gray-600 mb-1">เลือกแผนกที่มีอยู่</label>
+                  <select
+                    value={selectedDeptForEdit ?? ''}
+                    onChange={(e) => handleSelectDeptForEdit(e.target.value || null)}
+                    className="w-full px-3 py-2 border rounded"
+                  >
+                    <option value="">-- เลือกแผนกสำหรับแก้ไข --</option>
+                    {ipadDocs.map(d => (
+                      <option key={d.id} value={d.department ?? ''}>{d.department ?? d.id}</option>
+                    ))}
+                  </select>
+                </div>
                 {departments.includes(newDepartment) && newDepartment && (
                   <p className="mt-1 text-sm text-amber-600">แผนกนี้มีอยู่ในระบบแล้ว</p>
                 )}
               </div>
               
-              <div>
-                <label htmlFor="tags" className="block text-sm font-medium text-gray-700 mb-1">
-                  แท็ก 
-                </label>
-                <input
-                  type="text"
-                  id="tags"
-                  value={newTags}
-                  onChange={(e) => setNewTags(e.target.value)}
-                  className="w-full px-4 py-2 border-2 border-blue-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                  placeholder=""
-                />
-              </div>
+              {/* Tag text input removed — use the 'เพิ่มแท็ก' panel to add single tags */}
 
               {tags.length > 0 && (
                 <div className="mt-2">
@@ -509,8 +643,10 @@ export default function IPadTrackingSystem() {
                         {tag}
                         <button 
                           type="button"
-                          onClick={() => removeTag(tag)}
+                          onClick={() => handleRemoveTag(tag)}
                           className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-200 hover:bg-blue-300 text-blue-800"
+                          disabled={removingTag === tag}
+                          aria-label={`ลบแท็ก ${tag}`}
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -520,7 +656,35 @@ export default function IPadTrackingSystem() {
                 </div>
               )}
 
-              <div className="flex justify-end space-x-3 pt-2">
+              {/* Small department management panel: add single tag, rename, delete */}
+              <div className="mt-4 border-t pt-4">
+                <h3 className="text-sm font-semibold text-gray-700 mb-2">จัดการแผนกที่เลือก</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                  <div>
+                    <label className="text-xs text-gray-600">เพิ่มแท็ก</label>
+                    <input value={newSingleTag} onChange={(e) => setNewSingleTag(e.target.value)} className="w-full px-3 py-2 border rounded" placeholder="แท็กเดียว" />
+                  </div>
+                  <div>
+                    <button type="button" onClick={handleAddSingleTag} className="px-3 py-2 bg-green-600 text-white rounded disabled:opacity-60" disabled={!selectedDeptForEdit || !newSingleTag.trim()}>เพิ่มแท็ก</button>
+                  </div>
+                  <div />
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                  <div>
+                    <label className="text-xs text-gray-600">เปลี่ยนชื่อแผนก</label>
+                    <input value={renamingTo} onChange={(e) => setRenamingTo(e.target.value)} className="w-full px-3 py-2 border rounded" placeholder="ชื่อใหม่" />
+                  </div>
+                  <div>
+                    <button type="button" onClick={handleRenameDepartment} className="px-3 py-2 bg-blue-600 text-white rounded">เปลี่ยนชื่อ</button>
+                  </div>
+                  <div>
+                    {/* delete button moved to action row below for clearer layout */}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end space-x-3 pt-2">
                 <button
                   type="button"
                   onClick={toggleAddForm}
@@ -528,14 +692,54 @@ export default function IPadTrackingSystem() {
                 >
                   ยกเลิก
                 </button>
+
+                <button
+                  type="button"
+                  onClick={handleDeleteDepartment}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors shadow-md"
+                  disabled={!selectedDeptForEdit}
+                  title={!selectedDeptForEdit ? 'เลือกแผนกเพื่อจะลบ' : `ลบแผนก ${selectedDeptForEdit}`}
+                >
+                  ลบแผนก
+                </button>
+
+                <button
+                  type="button"
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-60"
+                  disabled={!newDepartment.trim() || savingDept}
+                  onClick={async () => {
+                    // quick create department without tags
+                    try {
+                      setSaveError(null);
+                      setSavingDept(true);
+                      await upsertIpadDepartment(newDepartment.trim(), []);
+                      const depts = await getDepartmentsFromDB();
+                      setDepartments(['ทั้งหมด', ...depts]);
+                      try { const docs = await getIpadDocs(); setIpadDocs(docs); } catch {}
+                      setNewDepartment('');
+                      setShowAddForm(false);
+                    } catch (e) {
+                      console.error('Error quick creating dept:', e);
+                      setSaveError(e instanceof Error ? e.message : String(e));
+                    } finally {
+                      setSavingDept(false);
+                    }
+                  }}
+                >
+                  เพิ่มแผนก
+                </button>
+
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                  disabled={!newDepartment.trim()}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-60"
+                  disabled={!newDepartment.trim() || savingDept}
                 >
-                  บันทึก
+                  {savingDept ? 'กำลังบันทึก...' : 'บันทึก'}
                 </button>
               </div>
+              {saveError && (
+                <p className="mt-2 text-sm text-red-600">{saveError}</p>
+              )}
             </form>
           </div>
         )}

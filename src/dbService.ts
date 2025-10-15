@@ -12,6 +12,7 @@ import {
   deleteDoc,
   writeBatch,
   Timestamp
+  , getDoc, setDoc, updateDoc
 } from 'firebase/firestore';
 
 // Base log interface
@@ -93,6 +94,139 @@ interface IpadDocument {
   tags?: string[];
   [key: string]: unknown;
 }
+
+// Helper to create a stable doc id for a department
+const deptIdFor = (department: string) => department.trim().toLowerCase().replace(/\s+/g, '_');
+
+// Create or update a department document in the `ipad` collection.
+// If the doc exists we merge tags; otherwise we create a new doc with the provided tags.
+export const upsertIpadDepartment = async (department: string, tags: string[] = []): Promise<void> => {
+  if (!department || !department.trim()) throw new Error('department required');
+  const id = deptIdFor(department);
+  const docRef = doc(db, 'ipad', id);
+  try {
+    const snap = await getDoc(docRef);
+    const normalizedTags = Array.from(new Set((tags || []).map(t => (t || '').toString().trim()).filter(Boolean)));
+    if (snap.exists()) {
+      const data = snap.data() as IpadDocument;
+      const existing = Array.isArray(data.tags) ? data.tags.map(t => String(t)) : [];
+      const merged = Array.from(new Set([...existing, ...normalizedTags]));
+      await updateDoc(docRef, { department, tags: merged });
+    } else {
+      await setDoc(docRef, { department, tags: normalizedTags });
+    }
+  } catch (error) {
+    console.error('Error upserting department:', error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+};
+
+// Remove a tag from a department document. If the resulting tags array is empty, keep the document (caller can delete if desired).
+export const removeTagFromDepartment = async (department: string, tag: string): Promise<void> => {
+  const id = deptIdFor(department);
+  const docRef = doc(db, 'ipad', id);
+  try {
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return;
+    const data = snap.data() as IpadDocument;
+    const existing = Array.isArray(data.tags) ? data.tags.map(t => String(t)) : [];
+    const updated = existing.filter(t => t !== tag);
+    await updateDoc(docRef, { tags: updated });
+  } catch (error) {
+    console.error('Error removing tag from dept:', error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+};
+
+// Delete a department document entirely
+export const deleteDepartment = async (department: string): Promise<void> => {
+  const id = deptIdFor(department);
+  const docRef = doc(db, 'ipad', id);
+  try {
+    await deleteDoc(docRef);
+  } catch (error) {
+    console.error('Error deleting department:', error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+};
+
+// Return all documents in the 'ipad' collection with id, department and tags
+export const getIpadDocs = async (): Promise<{ id: string; department?: string; tags?: string[] }[]> => {
+  try {
+    const snap = await getDocs(collection(db, 'ipad'));
+    const out: { id: string; department?: string; tags?: string[] }[] = [];
+    snap.forEach(d => {
+      const data = d.data() as IpadDocument;
+      out.push({ id: d.id, department: data.department, tags: Array.isArray(data.tags) ? data.tags.map(t => String(t)) : [] });
+    });
+    return out;
+  } catch (error) {
+    console.error('Error fetching ipad docs:', error);
+    return [];
+  }
+};
+
+// Add a single tag to a department (creates department doc if missing)
+export const addTagToDepartment = async (department: string, tag: string): Promise<void> => {
+  if (!tag || !tag.trim()) return;
+  const id = deptIdFor(department);
+  const docRef = doc(db, 'ipad', id);
+  try {
+    const snap = await getDoc(docRef);
+    const t = tag.trim();
+    if (snap.exists()) {
+      const data = snap.data() as IpadDocument;
+      const existing = Array.isArray(data.tags) ? data.tags.map(x => String(x)) : [];
+      if (!existing.includes(t)) {
+        await updateDoc(docRef, { tags: [...existing, t], department });
+      }
+    } else {
+      await setDoc(docRef, { department, tags: [t] });
+    }
+  } catch (error) {
+    console.error('Error adding tag to department:', error);
+    throw error;
+  }
+};
+
+// Rename a department: merge tags into target doc and delete the old doc
+export const renameIpadDepartment = async (oldName: string, newName: string): Promise<void> => {
+  if (!oldName || !newName) throw new Error('old and new department required');
+  const oldId = deptIdFor(oldName);
+  const newId = deptIdFor(newName);
+  if (oldId === newId) {
+    // names normalize to same id; just update department field
+    const docRef = doc(db, 'ipad', oldId);
+    await updateDoc(docRef, { department: newName });
+    return;
+  }
+
+  const oldRef = doc(db, 'ipad', oldId);
+  const newRef = doc(db, 'ipad', newId);
+  try {
+    const oldSnap = await getDoc(oldRef);
+    const newSnap = await getDoc(newRef);
+    const oldTags = oldSnap.exists() && Array.isArray(oldSnap.data().tags) ? (oldSnap.data().tags as string[]) : [];
+    const newTags = newSnap.exists() && Array.isArray(newSnap.data().tags) ? (newSnap.data().tags as string[]) : [];
+
+    const merged = Array.from(new Set([...(newTags || []), ...(oldTags || [])].map(t => String(t).trim()).filter(Boolean)));
+
+    // write merged into newRef (create or update)
+    if (newSnap.exists()) {
+      await updateDoc(newRef, { department: newName, tags: merged });
+    } else {
+      await setDoc(newRef, { department: newName, tags: merged });
+    }
+
+    // delete old doc if exists and id differs
+    if (oldSnap.exists()) {
+      await deleteDoc(oldRef);
+    }
+  } catch (error) {
+    console.error('Error renaming department:', error);
+    throw error;
+  }
+};
 
 export const getLogs = async (): Promise<Log[]> => {
   try {
