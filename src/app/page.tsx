@@ -1,4 +1,17 @@
 "use client";
+import { Doughnut } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend
+} from 'chart.js';
+
+ChartJS.register(
+  ArcElement,
+  Tooltip,
+  Legend
+);
 import Swal from 'sweetalert2';
 /* Lines 2-11 omitted */
 
@@ -620,20 +633,49 @@ export default function IPadTrackingSystem() {
       <BubbleBackground />
       <div className="relative z-10 max-w-7xl mx-auto p-4 md:p-6">
         <div className="bg-gradient-to-r from-blue-600 to-sky-500 rounded-2xl shadow-xl p-6 md:p-8 mb-6">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-16 h-16 relative">
-              <Image 
-                src="/Instigator.jpg" 
-                alt="Instigator Logo" 
-                fill 
-                className="rounded-full object-cover border-2 border-white shadow-md"
-                sizes="64px"
-                priority
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-16 h-16 relative">
+                <Image 
+                  src="/Instigator.jpg" 
+                  alt="Instigator Logo" 
+                  fill 
+                  className="rounded-full object-cover border-2 border-white shadow-md"
+                  sizes="64px"
+                  priority
+                />
+              </div>
+              <div>
+                <h1 className="text-3xl md:text-4xl font-bold text-white mb-1">IPad Tracking System</h1>
+                <p className="text-blue-100 text-lg">โรงพยาบาลรามคำแหง - ระบบบันทึกการส่งเข้า/ออกอุปกรณ์</p>
+              </div>
+            </div>
+            <div className="w-32 h-32">
+              <Doughnut
+                data={{
+                  labels: ['', ''],
+                  datasets: [{
+                    data: [
+                      logs.filter(log => log.status === 'ส่งเข้า').length,
+                      logs.filter(log => log.status === 'ส่งออก').length
+                    ],
+                    backgroundColor: ['#4ade80', '#fb923c'],
+                    borderColor: ['#fff', '#fff'],
+                    borderWidth: 2,
+                  }]
+                }}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: true,
+                  plugins: {
+                    legend: {
+                      display: false
+                    }
+                  }
+                }}
               />
             </div>
-            <h1 className="text-3xl md:text-4xl font-bold text-white">IPad Tracking System</h1>
           </div>
-          <p className="text-blue-100 text-lg">โรงพยาบาลรามคำแหง - ระบบบันทึกการส่งเข้า/ออกอุปกรณ์</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">

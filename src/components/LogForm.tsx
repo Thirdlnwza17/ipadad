@@ -1,8 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef, ChangeEvent, KeyboardEvent } from 'react';
+import { useState, useEffect, useRef, ChangeEvent, KeyboardEvent, useCallback } from 'react';
 import Image from 'next/image';
 import { addLog, getTagsByDepartment, getDepartmentsFromDB } from '../dbService';
+
+// Cache interface
+interface TagCache {
+  [key: string]: string; // tag -> department
+}
 
 interface LogFormProps {
   status: 'ส่งเข้า' | 'ส่งออก';
@@ -20,86 +25,125 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
   const [isValidTag, setIsValidTag] = useState(false);
   const [count, setCount] = useState(0);
   const ipadTagInputRef = useRef<HTMLInputElement>(null);
+  const tagsCache = useRef<TagCache>({});
+  const lastFetchTime = useRef<number>(0);
+  const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache
+  const tagCheckTimer = useRef<NodeJS.Timeout | null>(null);
 
   // Reset count when employeeId changes
   useEffect(() => {
     setCount(0);
   }, [employeeId]);
 
+  // Update date time
   useEffect(() => {
-    const timer = setInterval(() => {
+    const updateDateTime = () => {
       const now = new Date();
-      const date = now.toLocaleDateString('en-US', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-      });
+      const thaiDays = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+      const thaiMonths = [
+        'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน',
+        'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม',
+        'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+      ];
+      
+      const day = now.getDay();
+      const date = now.getDate();
+      const month = now.getMonth();
+      const year = now.getFullYear();
       const time = now.toLocaleTimeString('th-TH');
-      setCurrentDateTime(`${date} ${time}`);
-    }, 1000);
+      
+      setCurrentDateTime(`วัน${thaiDays[day]}ที่ ${date} ${thaiMonths[month]} ${year} เวลา ${time}`);
+    };
 
-    return () => clearInterval(timer);
+    updateDateTime();
+    const timer = setInterval(updateDateTime, 1000);
+    return () => {
+      clearInterval(timer);
+      if (tagCheckTimer.current !== null) {
+        clearTimeout(tagCheckTimer.current);
+        tagCheckTimer.current = null;
+      }
+    };
   }, []);
 
-  const findDepartmentForTag = async (tag: string): Promise<string> => {
+  // Load and cache tags
+  const loadAndCacheTags = useCallback(async () => {
+    const now = Date.now();
+    if (now - lastFetchTime.current < CACHE_DURATION) return;
+
     try {
       const departments = await getDepartmentsFromDB();
+      const newCache: TagCache = {};
       
-      for (const dept of departments) {
-        const tags = await getTagsByDepartment(dept);
-        if (tags.includes(tag)) {
-          return dept;
-        }
-      }
-      return 'ไม่ระบุแผนก';
+      // Process departments in parallel
+      await Promise.all(
+        departments.map(async (dept) => {
+          const tags = await getTagsByDepartment(dept);
+          tags.forEach(tag => {
+            newCache[tag] = dept;
+          });
+        })
+      );
+      
+      tagsCache.current = newCache;
+      lastFetchTime.current = now;
     } catch (error) {
-      console.error('Error finding department for tag:', error);
-      return 'ไม่ระบุแผนก';
+      console.error('Error loading tags:', error);
     }
+  }, []);
+
+  // Initial load of tags
+  useEffect(() => {
+    loadAndCacheTags();
+  }, [loadAndCacheTags]);
+
+  // Refresh cache periodically
+  useEffect(() => {
+    const interval = setInterval(loadAndCacheTags, CACHE_DURATION);
+    return () => clearInterval(interval);
+  }, [loadAndCacheTags]);
+
+  const findDepartmentForTag = (tag: string): string => {
+    return tagsCache.current[tag] || 'ไม่ระบุแผนก';
   };
 
- 
-  const checkTagValidity = async (tag: string) => {
+  const checkTagValidity = (tag: string): boolean => {
     if (!tag) {
       setIsValidTag(false);
       return false;
     }
     
-    try {
-      const departments = await getDepartmentsFromDB();
-      for (const dept of departments) {
-        const tags = await getTagsByDepartment(dept);
-        if (tags.includes(tag)) {
-          setIsValidTag(true);
-          return true;
-        }
-      }
-      setIsValidTag(false);
-      return false;
-    } catch (error) {
-      console.error('Error checking tag validity:', error);
-      setIsValidTag(false);
-      return false;
-    }
+    const isValid = tag in tagsCache.current;
+    setIsValidTag(isValid);
+    return isValid;
   };
 
   // Handle tag input change with auto-submit for valid tags
-  const handleIpadTagChange = async (e: ChangeEvent<HTMLInputElement>) => {
+  const handleIpadTagChange = (e: ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setIpadTag(value);
     
+    // Clear any previous timers
+    if (tagCheckTimer.current !== null) {
+      clearTimeout(tagCheckTimer.current);
+      tagCheckTimer.current = null;
+    }
+    
     const tag = value.trim();
     
-    if (tag) {
-      const isValid = await checkTagValidity(tag);
-      if (isValid) {
-        // Auto-submit when a complete valid tag is detected
-        await processTag(tag);
-      }
-    } else {
+    if (!tag) {
       setIsValidTag(false);
       setSuccess('');
+      return;
     }
+    
+    // Debounce the validation
+    tagCheckTimer.current = setTimeout(() => {
+      const isValid = checkTagValidity(tag);
+      if (isValid) {
+        processTag(tag);
+      }
+    }, 300); // 300ms debounce
   };
 
   const processTag = async (tag: string) => {
@@ -113,13 +157,13 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
     
     try {
       // Check if tag is valid before proceeding
-      const isValid = await checkTagValidity(tag);
+      const isValid = checkTagValidity(tag);
       if (!isValid) {
         setError(`ไม่พบแท็ก: ${tag} ในระบบ`);
         return false;
       }
       
-      const department = await findDepartmentForTag(tag);
+      const department = findDepartmentForTag(tag);
       
       try {
         await addLog({ 
@@ -206,6 +250,7 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
   }, []);
 
   return (
+    <>
     <div className="w-full max-w-xl mx-auto bg-white rounded-xl shadow-lg p-6 md:p-8">
       <div className="mb-6">
         <div className="flex items-center gap-4">
@@ -219,7 +264,20 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
             />
           </div>
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-blue-500 to-blue-800 text-transparent bg-clip-text">{`บันทึกการ${status}`}</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-blue-500 to-blue-800 text-transparent bg-clip-text">
+                {`บันทึกการ${status} IPad`}
+              </h1>
+              <div className="relative h-10 w-10 -mt-1">
+                <Image 
+                  src="/R (1).jpg" 
+                  alt="" 
+                  fill
+                  className="object-contain"
+                  style={{ objectFit: 'contain' }}
+                />
+              </div>
+            </div>
             <p className="text-gray-500">ระบบติดตามไอแพด</p>
           </div>
         </div>
@@ -300,5 +358,9 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
         )}
       </div>
     </div>
+    <div className="mt-4 text-center text-gray-500 text-sm w-full">
+      @2025 | For Ram Hospital | Chitiwat Turmcher
+    </div>
+    </>
   );
 }
