@@ -2,10 +2,10 @@
 
 import { useState, useEffect, ChangeEvent, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Filter, ArrowRight, ArrowLeft, Trash2, Plus, X } from 'lucide-react';
+import { Filter, ArrowRight, ArrowLeft, Trash2, Plus, X, Download } from 'lucide-react';
 import Image from 'next/image';
 import BubbleBackground from '../components/BubbleBackground';
-import { getLogs, Log, getDepartmentsFromDB, deleteLogs } from '../dbService';
+import { getLogs, Log, getDepartmentsFromDB, deleteLogs, getTagsByDepartment } from '../dbService';
 import { VercelDateRangePicker } from '../components/VercelDateRangePicker';
 import { isWithinInterval, parseISO } from 'date-fns';
 
@@ -52,7 +52,6 @@ export default function IPadTrackingSystem() {
       setDepartments(prev => [...prev, newDepartment]);
     }
 
-    // Add new tags if any
     if (newTags) {
       const tagsToAdd = newTags.split(',').map(tag => tag.trim()).filter(Boolean);
       const uniqueNewTags = tagsToAdd.filter(tag => !tags.includes(tag));
@@ -165,12 +164,81 @@ export default function IPadTrackingSystem() {
     }
   };
 
-  // Check if any logs are selected
+  const exportToCSV = () => {
+    // Get current month and year for the filename
+    const now = new Date();
+    const thaiMonths = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน',
+                       'กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+    const month = now.getMonth();
+    const year = now.getFullYear();
+    const monthYear = `${thaiMonths[month]} ${year}`;
+    
+    // Create title row
+    const titleRow = [
+      `"รายงานการส่งเข้า-ออกอุปกรณ์ ประจำเดือน${thaiMonths[month]} ${year}"`,
+      ...Array(62).fill('') // Fill remaining cells in title row
+    ];
+    
+    // Create headers
+    const headers = ['แผนก', 'จำนวนแท็ก'];
+    
+    // Add day headers (1-31) with in/out subheaders
+    for (let day = 1; day <= 31; day++) {
+      headers.push(`วันที่ ${day} (เข้า)`, `วันที่ ${day} (ออก)`);
+    }
+    
+    // Create department rows
+    const rows = departmentSummary.map(dept => {
+      const row = [
+        `"${dept.department}"`,
+        dept.tagCount
+      ];
+      
+      // Add day data
+      for (let i = 0; i < 31; i++) {
+        const dayData = dept.days[i] || { in: 0, out: 0 };
+        row.push(dayData.in, dayData.out);
+      }
+      
+      return row.join(',');
+    });
+    
+    // Combine all rows
+    const csvContent = [
+      titleRow.join(','),
+      headers.join(','),
+      ...rows
+    ].join('\n');
+    
+    // Create download link
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const dateStr = `${year}${(month + 1).toString().padStart(2, '0')}`;
+    
+    link.href = url;
+    link.download = `ipad_summary_${dateStr}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+ 
   const hasSelectedLogs = Object.values(selectedLogs).some(Boolean);
   const hasSelectedDeptLogs = Object.values(selectedDeptLogs).some(Boolean);
 
   useEffect(() => {
-    setLogs(getLogs());
+    const fetchLogs = async () => {
+      try {
+        const logs = await getLogs();
+        setLogs(logs);
+      } catch (error) {
+        console.error('Error fetching logs:', error);
+      }
+    };
+    
+    fetchLogs();
   }, []);
 
   useEffect(() => {
@@ -211,28 +279,140 @@ export default function IPadTrackingSystem() {
   const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
   const currentLogs = filteredLogs.slice(startIndex, endIndex);
 
-  // Calculate department summary
-  const departmentSummary = useMemo(() => {
-    const summary: Record<string, { in: number; out: number }> = {};
-    
-    filteredLogs.forEach(log => {
-      if (!summary[log.department]) {
-        summary[log.department] = { in: 0, out: 0 };
+  // State to store all departments and their tag counts
+  const [allDepartments, setAllDepartments] = useState<{name: string, tagCount: number}[]>([]);
+
+  // Fetch all departments and their tag counts
+  useEffect(() => {
+    const fetchDepartments = async () => {
+      try {
+        const depts = await getDepartmentsFromDB();
+        const departmentsWithCounts = await Promise.all(
+          depts.map(async (dept) => {
+            const tags = await getTagsByDepartment(dept);
+            return {
+              name: dept,
+              tagCount: tags.length
+            };
+          })
+        );
+        setAllDepartments(departmentsWithCounts);
+      } catch (error) {
+        console.error('Error fetching departments:', error);
       }
+    };
+
+    fetchDepartments();
+  }, [showDeptSummary]);
+
+  // Calculate department summary with per-day counts (1..31)
+  type DeptDayCounts = {
+    department: string;
+    inCount: number;
+    outCount: number;
+    total: number;
+    tagCount: number;
+    days: { in: number; out: number }[]; // index 0 => day 1, ... index 30 => day 31
+  };
+
+  const departmentSummary = useMemo(() => {
+    // Initialize maps
+  const logCounts: Record<string, { in: number; out: number; days: { in: number; out: number }[] }> = {};
+
+  // Prepare empty days array helper
+  const emptyDays = () => Array.from({ length: 31 }, () => ({ in: 0, out: 0 }));
+
+    // Aggregate filteredLogs into per-department totals and per-day buckets
+    filteredLogs.forEach(log => {
+      const dept = log.department || 'ไม่ระบุ';
+      if (!logCounts[dept]) {
+        logCounts[dept] = { in: 0, out: 0, days: emptyDays() };
+      }
+
+      // Count in/out
       if (log.status === 'ส่งเข้า') {
-        summary[log.department].in += 1;
+        logCounts[dept].in += 1;
       } else {
-        summary[log.department].out += 1;
+        logCounts[dept].out += 1;
+      }
+
+      // Determine day of month from timestamp or date field
+      let day = 0;
+      try {
+        const d = new Date(log.timestamp);
+        if (!Number.isNaN(d.getTime())) {
+          day = d.getDate();
+        }
+      } catch (e) {
+        // fallback if timestamp malformed
+      }
+
+      if (day >= 1 && day <= 31) {
+        // increment day's in/out count for this dept
+        if (log.status === 'ส่งเข้า') {
+          logCounts[dept].days[day - 1].in += 1;
+        } else {
+          logCounts[dept].days[day - 1].out += 1;
+        }
       }
     });
 
-    return Object.entries(summary).map(([dept, counts]) => ({
-      department: dept,
-      inCount: counts.in,
-      outCount: counts.out,
-      total: counts.in + counts.out
-    })).sort((a, b) => b.total - a.total);
-  }, [filteredLogs]);
+    // Ensure we include all departments from allDepartments even if they have zero logs
+    const deptMap = new Map(allDepartments.map(dept => [dept.name, dept.tagCount]));
+
+    const result: DeptDayCounts[] = Array.from(deptMap.entries()).map(([dept, tagCount]) => {
+      const counts = logCounts[dept] || { in: 0, out: 0, days: emptyDays() };
+      return {
+        department: dept,
+        inCount: counts.in,
+        outCount: counts.out,
+        total: counts.in + counts.out,
+        tagCount: tagCount,
+        days: counts.days
+      };
+    });
+
+    // Also include any departments that appeared in logs but not in allDepartments (defensive)
+    Object.keys(logCounts).forEach(dept => {
+      if (!deptMap.has(dept)) {
+        const counts = logCounts[dept];
+        result.push({
+          department: dept,
+          inCount: counts.in,
+          outCount: counts.out,
+          total: counts.in + counts.out,
+          tagCount: 0,
+          days: counts.days
+        });
+      }
+    });
+
+    return result.sort((a, b) => b.total - a.total);
+  }, [filteredLogs, allDepartments]);
+
+  // Compute a display label for the month and year to show on the department summary header.
+  // Prefer the selected date range (startDate..endDate). If the range is within a single month/year,
+  // show that month and year. If it spans multiple months, show a start—end month/year range.
+  // If no valid range is selected, fall back to the current month/year (Gregorian / ค.ศ.).
+  const deptSummaryDateLabel = (() => {
+    const thaiMonths = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+    try {
+      if (dateRange.startDate && dateRange.endDate) {
+        const start = parseISO(dateRange.startDate);
+        const end = parseISO(dateRange.endDate);
+        if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
+          if (start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()) {
+            return <span className="text-black">{thaiMonths[start.getMonth()]} {start.getFullYear()}</span>;
+          }
+          return <span className="text-black">{thaiMonths[start.getMonth()]} {start.getFullYear()} — {thaiMonths[end.getMonth()]} {end.getFullYear()}</span>;
+        }
+      }
+    } catch (e) {
+      // ignore and fall back
+    }
+    const now = new Date();
+    return <span className="text-black">{thaiMonths[now.getMonth()]} {now.getFullYear()}</span>;
+  })();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-sky-50 relative">
@@ -250,7 +430,7 @@ export default function IPadTrackingSystem() {
                 priority
               />
             </div>
-            <h1 className="text-3xl md:text-4xl font-bold text-white">Ipad Tracking System</h1>
+            <h1 className="text-3xl md:text-4xl font-bold text-white">IPad Tracking System</h1>
           </div>
           <p className="text-blue-100 text-lg">โรงพยาบาลรามคำแหง - ระบบบันทึกการส่งเข้า/ออกอุปกรณ์</p>
         </div>
@@ -277,13 +457,13 @@ export default function IPadTrackingSystem() {
             className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-purple-500 to-indigo-400 text-white font-bold rounded-xl hover:from-purple-600 hover:to-indigo-500 transition-all shadow-lg text-lg"
           >
             <Plus className="w-5 h-5" />
-            {showAddForm ? 'ปิดฟอร์ม' : 'เพิ่มแผนก/แท็ก'}
+            {showAddForm ? 'ปิดฟอร์ม' : 'แก้ไขแผนก/แท็ก'}
           </button>
         </div>
 
         {showAddForm && (
           <div className="bg-white rounded-xl shadow-lg p-6 mb-6 border border-blue-100">
-            <h2 className="text-xl font-semibold text-blue-800 mb-4">เพิ่มแผนกและแท็ก</h2>
+            <h2 className="text-xl font-semibold text-blue-800 mb-4">แก้ไขแผนกและแท็ก</h2>
             <form onSubmit={handleAddDepartment} className="space-y-4">
               <div>
                 <label htmlFor="department" className="block text-sm font-medium text-gray-700 mb-1">
@@ -295,7 +475,7 @@ export default function IPadTrackingSystem() {
                   value={newDepartment}
                   onChange={(e) => setNewDepartment(e.target.value)}
                   className="w-full px-4 py-2 border-2 border-blue-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                  placeholder="ชื่อแผนก"
+                  placeholder=""
                   required
                 />
                 {departments.includes(newDepartment) && newDepartment && (
@@ -305,7 +485,7 @@ export default function IPadTrackingSystem() {
               
               <div>
                 <label htmlFor="tags" className="block text-sm font-medium text-gray-700 mb-1">
-                  แท็ก (คั่นด้วยเครื่องหมาย ,)
+                  แท็ก 
                 </label>
                 <input
                   type="text"
@@ -313,7 +493,7 @@ export default function IPadTrackingSystem() {
                   value={newTags}
                   onChange={(e) => setNewTags(e.target.value)}
                   className="w-full px-4 py-2 border-2 border-blue-200 rounded-lg focus:border-blue-500 focus:outline-none"
-                  placeholder="ตัวอย่าง: แท็ก1, แท็ก2, แท็ก3"
+                  placeholder=""
                 />
               </div>
 
@@ -425,7 +605,14 @@ export default function IPadTrackingSystem() {
         <div className="bg-white rounded-xl shadow-lg mb-6 overflow-hidden border border-blue-100">
           <div className="p-4 border-b border-blue-100 flex flex-wrap justify-between items-center gap-4">
             <h2 className="text-lg font-semibold text-blue-800">
-              {showDeptSummary ? 'สรุปการส่งเข้า/ออก แยกตามแผนก' : 'รายการส่งเข้า/ส่งออก'}
+              {showDeptSummary ? (
+                <span>
+                  สรุปการส่งเข้า/ออก แยกตามแผนก
+                  <span className="ml-6 text-sm font-semibold text-black-100">{deptSummaryDateLabel}</span>
+                </span>
+              ) : (
+                'รายการส่งเข้า/ส่งออก'
+              )}
             </h2>
             <div className="flex items-center gap-3">
               {(hasSelectedLogs || hasSelectedDeptLogs) && (
@@ -435,6 +622,15 @@ export default function IPadTrackingSystem() {
                 >
                   <Trash2 className="w-4 h-4" />
                   ลบที่เลือก ({showDeptSummary ? Object.values(selectedDeptLogs).filter(Boolean).length : Object.values(selectedLogs).filter(Boolean).length})
+                </button>
+              )}
+              {showDeptSummary && (
+                <button
+                  onClick={exportToCSV}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  ส่งออก CSV
                 </button>
               )}
               <button 
@@ -466,41 +662,48 @@ export default function IPadTrackingSystem() {
                 <thead className="bg-gradient-to-r from-blue-600 to-sky-500 text-white">
                   <tr>
                     <th className="px-4 py-3 text-left font-semibold">แผนก</th>
-                    <th className="px-4 py-3 text-center font-semibold">ส่งเข้า</th>
-                    <th className="px-4 py-3 text-center font-semibold">ส่งออก</th>
-                    <th className="px-4 py-3 text-center font-semibold">รวม</th>
-                    <th className="px-4 py-3 text-center w-12">
-                      <input
-                        type="checkbox"
-                        checked={selectAllDept}
-                        onChange={handleSelectAllDeptLogs}
-                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                    </th>
+                    {/* Day columns 1..31 */}
+                    {Array.from({ length: 31 }, (_, i) => (
+                      <th key={i} className="px-2 py-3 text-center text-sm font-semibold">{i + 1}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
                   {departmentSummary.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                      <td colSpan={33} className="px-4 py-8 text-center text-gray-500">
                         ไม่มีข้อมูล
                       </td>
                     </tr>
                   ) : (
                     departmentSummary.map((dept) => (
                       <tr key={dept.department} className="border-b border-blue-50 hover:bg-blue-50 transition-colors">
-                        <td className="px-4 py-3 font-semibold text-blue-700">{dept.department}</td>
-                        <td className="px-4 py-3 text-center text-green-600">{dept.inCount}</td>
-                        <td className="px-4 py-3 text-center text-orange-600">{dept.outCount}</td>
-                        <td className="px-4 py-3 text-center font-bold text-blue-800">{dept.total}</td>
-                        <td className="px-4 py-3 text-center">
-                          <input
-                            type="checkbox"
-                            checked={!!selectedDeptLogs[dept.department]}
-                            onChange={() => handleDeptLogSelect(dept.department)}
-                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                          />
+                        <td className="px-4 py-3 font-semibold text-blue-700">
+                          {dept.department}
+                          {dept.tagCount > 0 && (
+                            <span className="ml-2 text-xs font-normal text-gray-500">
+                              ({dept.tagCount} แท็ก)
+                            </span>
+                          )}
                         </td>
+                        {/* Render day counts (in/out badges) */}
+                        {dept.days && dept.days.map((count, idx) => (
+                          <td key={idx} className="px-2 py-2 text-center text-sm text-gray-700">
+                            {count.in === 0 && count.out === 0 ? (
+                              // render empty cell when both counts are zero
+                              <span className="inline-block w-full h-full">&nbsp;</span>
+                            ) : (
+                              <div className="flex flex-col items-center gap-0">
+                                {count.in > 0 && (
+                                  <span className="text-sm font-semibold text-green-700">{count.in}</span>
+                                )}
+                                {count.out > 0 && (
+                                  <span className="text-sm font-semibold text-orange-700">{count.out}</span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        ))}
                       </tr>
                     ))
                   )}
@@ -519,20 +722,12 @@ export default function IPadTrackingSystem() {
                       <th className="px-4 py-3 text-left font-semibold">สถานะ</th>
                       <th className="px-4 py-3 text-left font-semibold">วันที่</th>
                       <th className="px-4 py-3 text-left font-semibold">เวลา</th>
-                      <th className="px-4 py-3 text-center w-12">
-                        <input
-                          type="checkbox"
-                          checked={selectAll}
-                          onChange={handleSelectAllLogs}
-                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {currentLogs.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                        <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
                           ไม่มีข้อมูล
                         </td>
                       </tr>
@@ -553,15 +748,6 @@ export default function IPadTrackingSystem() {
                           </td>
                           <td className="px-4 py-3 text-gray-600">{log.date}</td>
                           <td className="px-4 py-3 text-gray-600">{log.time}</td>
-                          <td className="px-4 py-3 text-center">
-                            <input
-                              type="checkbox"
-                              checked={!!selectedLogs[log.id]}
-                              onChange={() => handleLogSelect(log.id.toString())}
-                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          </td>
                         </tr>
                       ))
                     )}

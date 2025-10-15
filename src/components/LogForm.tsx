@@ -18,12 +18,18 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isValidTag, setIsValidTag] = useState(false);
+  const [count, setCount] = useState(0);
   const ipadTagInputRef = useRef<HTMLInputElement>(null);
+
+  // Reset count when employeeId changes
+  useEffect(() => {
+    setCount(0);
+  }, [employeeId]);
 
   useEffect(() => {
     const timer = setInterval(() => {
       const now = new Date();
-      const date = now.toLocaleDateString('th-TH', {
+      const date = now.toLocaleDateString('en-US', {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
@@ -52,7 +58,7 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
     }
   };
 
-  // Check if tag is valid (exists in any department)
+ 
   const checkTagValidity = async (tag: string) => {
     if (!tag) {
       setIsValidTag(false);
@@ -129,6 +135,7 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
         
         setSuccess(successMsg);
         setIpadTag(''); // Clear only the iPad tag input
+        setCount(prevCount => prevCount + 1); // Increment count
         ipadTagInputRef.current?.focus(); // Focus back on the tag input
         
         // Clear success message after 3 seconds
@@ -230,11 +237,17 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
             className="w-full px-4 py-3 border-2 border-blue-200 rounded-lg focus:border-blue-500 focus:outline-none transition-colors disabled:opacity-70"
           />
         </div>
-        
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            แท็กไอแพด 
-          </label>
+        <div className="mb-4">
+          <div className="flex justify-between items-center mb-2">
+            <label className="block text-gray-700 text-sm font-bold" htmlFor="ipadTag">
+              แท็กไอแพด {isValidTag && '✓'}
+            </label>
+            {count > 0 && (
+              <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                จำนวน: {count}
+              </span>
+            )}
+          </div>
           <form onSubmit={handleSubmit} className="relative">
             <input
               ref={ipadTagInputRef}
