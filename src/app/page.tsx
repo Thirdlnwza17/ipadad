@@ -93,21 +93,10 @@ export default function IPadTrackingSystem() {
       }
     }
   };  // Toggle add form visibility
-  const toggleAddForm = async () => {
+  const toggleAddForm = () => {
     if (!showAddForm) {
-      const result = await Swal.fire({
-        title: 'เพิ่มแผนกใหม่',
-        text: 'คุณต้องการเพิ่มแผนกใหม่ใช่หรือไม่?',
-        icon: 'question',
-        showCancelButton: true,
-        confirmButtonText: 'ใช่, เพิ่มแผนก',
-        cancelButtonText: 'ยกเลิก'
-      });
-
-      if (result.isConfirmed) {
-        setShowAddForm(true);
-        setNewDepartment('');
-      }
+      setShowAddForm(true);
+      setNewDepartment('');
     } else {
       setShowAddForm(false);
       setNewDepartment('');
@@ -787,21 +776,33 @@ export default function IPadTrackingSystem() {
                   className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-60"
                   disabled={!newDepartment.trim() || savingDept}
                   onClick={async () => {
-                    // quick create department without tags
-                    try {
-                      setSaveError(null);
-                      setSavingDept(true);
-                      await upsertIpadDepartment(newDepartment.trim(), []);
-                      const depts = await getDepartmentsFromDB();
-                      setDepartments(['ทั้งหมด', ...depts]);
-                      try { const docs = await getIpadDocs(); setIpadDocs(docs); } catch {}
-                      setNewDepartment('');
-                      setShowAddForm(false);
-                    } catch (e) {
-                      console.error('Error quick creating dept:', e);
-                      setSaveError(e instanceof Error ? e.message : String(e));
-                    } finally {
-                      setSavingDept(false);
+                    const result = await Swal.fire({
+                      title: 'ยืนยันการเพิ่มแผนก',
+                      text: `คุณต้องการเพิ่มแผนก "${newDepartment.trim()}" ใช่หรือไม่?`,
+                      icon: 'question',
+                      showCancelButton: true,
+                      confirmButtonText: 'ใช่, เพิ่มแผนก',
+                      cancelButtonText: 'ยกเลิก'
+                    });
+
+                    if (result.isConfirmed) {
+                      try {
+                        setSaveError(null);
+                        setSavingDept(true);
+                        await upsertIpadDepartment(newDepartment.trim(), []);
+                        const depts = await getDepartmentsFromDB();
+                        setDepartments(['ทั้งหมด', ...depts]);
+                        try { const docs = await getIpadDocs(); setIpadDocs(docs); } catch {}
+                        setNewDepartment('');
+                        setShowAddForm(false);
+                        Swal.fire('สำเร็จ', 'เพิ่มแผนกเรียบร้อยแล้ว', 'success');
+                      } catch (e) {
+                        console.error('Error quick creating dept:', e);
+                        setSaveError(e instanceof Error ? e.message : String(e));
+                        Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถเพิ่มแผนกได้', 'error');
+                      } finally {
+                        setSavingDept(false);
+                      }
                     }
                   }}
                 >
