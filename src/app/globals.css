@@ -3,6 +3,11 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --font-ibm-plex-sans-thai: 'IBM Plex Sans Thai', sans-serif;
+}
+
+* {
+  font-family: var(--font-ibm-plex-sans-thai);
 }
 
 @theme inline {
