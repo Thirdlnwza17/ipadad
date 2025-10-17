@@ -635,15 +635,17 @@ export default function IPadTrackingSystem() {
         <div className="bg-gradient-to-r from-blue-600 to-sky-500 rounded-2xl shadow-xl p-6 md:p-8 mb-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-16 h-16 relative">
-                <Image 
-                  src="/Instigator.jpg" 
-                  alt="Instigator Logo" 
-                  fill 
-                  className="rounded-full object-cover border-2 border-white shadow-md"
-                  sizes="64px"
-                  priority
-                />
+              <div className="w-20 h-20 relative flex items-center justify-center bg-gradient-to-r from-blue-600 to-sky-500 rounded-lg p-1">
+                <div className="relative w-full h-full">
+                  <Image 
+                    src="/Screenshot 2025-10-17 113950.png" 
+                    alt="Instigator Logo" 
+                    fill 
+                    className="object-contain"
+                    sizes="80px"
+                    priority
+                  />
+                </div>
               </div>
               <div>
                 <h1 className="text-3xl md:text-4xl font-bold text-white mb-1">IPad Tracking System</h1>

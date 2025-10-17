@@ -324,7 +324,7 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
               </h1>
               <div className="relative h-15 w-15 -mt-1">
                 <Image 
-                  src="/R.png" 
+                  src="/Screenshot 2025-10-17 113950.png" 
                   alt="" 
                   fill
                   className="object-contain"
