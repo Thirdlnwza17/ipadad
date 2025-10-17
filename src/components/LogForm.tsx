@@ -322,7 +322,11 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
               <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-blue-500 to-blue-800 text-transparent bg-clip-text">
                 {`บันทึกการ${status} IPad`}
               </h1>
-              <div className="relative h-15 w-15 -mt-1">
+              <button 
+                onClick={() => window.location.href = '/'}
+                className="relative h-15 w-15 -mt-1 hover:opacity-80 transition-opacity"
+                aria-label="กลับหน้าหลัก"
+              >
                 <Image 
                   src="/Screenshot 2025-10-17 113950.png" 
                   alt="" 
@@ -330,7 +334,7 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
                   className="object-contain"
                   style={{ objectFit: 'contain' }}
                 />
-              </div>
+              </button>
             </div>
             <p className="text-gray-500">ระบบติดตามไอแพด</p>
           </div>
