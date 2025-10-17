@@ -24,15 +24,55 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
   const [success, setSuccess] = useState('');
   const [isValidTag, setIsValidTag] = useState(false);
   const [count, setCount] = useState(0);
+  const employeeIdInputRef = useRef<HTMLInputElement>(null);
   const ipadTagInputRef = useRef<HTMLInputElement>(null);
   const tagsCache = useRef<TagCache>({});
   const lastFetchTime = useRef<number>(0);
+  const lastActivityTime = useRef<number>(Date.now());
   const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache
   const tagCheckTimer = useRef<NodeJS.Timeout | null>(null);
+  const employeeIdTimer = useRef<NodeJS.Timeout | null>(null);
+  const inactivityTimer = useRef<NodeJS.Timeout | null>(null);
+  const INACTIVITY_TIMEOUT = 3 * 60 * 1000; // 3 minutes
+
+  // Track user activity and manage inactivity timer
+  useEffect(() => {
+    const handleActivity = () => {
+      lastActivityTime.current = Date.now();
+    };
+
+    // Set up event listeners for user activity
+    window.addEventListener('keydown', handleActivity);
+    window.addEventListener('mousedown', handleActivity);
+    window.addEventListener('scroll', handleActivity);
+
+    // Check for inactivity every 30 seconds
+    const checkInactivity = () => {
+      const currentTime = Date.now();
+      if (employeeId && (currentTime - lastActivityTime.current) >= INACTIVITY_TIMEOUT) {
+        setEmployeeId('');
+        employeeIdInputRef.current?.focus();
+      }
+    };
+
+    const interval = setInterval(checkInactivity, 30000); // Check every 30 seconds
+
+    // Clean up
+    return () => {
+      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('mousedown', handleActivity);
+      window.removeEventListener('scroll', handleActivity);
+      clearInterval(interval);
+      if (inactivityTimer.current) {
+        clearTimeout(inactivityTimer.current);
+      }
+    };
+  }, [employeeId]);
 
   // Reset count when employeeId changes
   useEffect(() => {
     setCount(0);
+    lastActivityTime.current = Date.now(); // Update activity time when employeeId changes
   }, [employeeId]);
 
   // Update date time
@@ -178,16 +218,23 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
           : `Ipad Tags นี้ส่งเข้าระบบแล้ว (ส่งคืนสำเร็จ)`;
         
         setSuccess(successMsg);
-        setIpadTag(''); // Clear only the iPad tag input
-        setCount(prevCount => prevCount + 1); // Increment count
-        ipadTagInputRef.current?.focus(); // Focus back on the tag input
+        setIpadTag(''); // Clear the iPad tag input
+        setCount(prevCount => prevCount + 1);
+        
+        // Focus back on the tag input immediately
+        requestAnimationFrame(() => {
+          ipadTagInputRef.current?.focus({ preventScroll: true });
+          ipadTagInputRef.current?.select();
+        });
         
         // Clear success message after 3 seconds
-        setTimeout(() => setSuccess(''), 3000);
+        const timer = setTimeout(() => setSuccess(''), 3000);
         
-        // Trigger parent callback if exists
         if (onSuccess) onSuccess();
-        return true;
+        
+        return () => {
+          clearTimeout(timer);
+        };
       } catch (error) {
         // Handle specific error messages from addLog
         if (error instanceof Error) {
@@ -225,7 +272,14 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
     }
   };
 
-  const handleKeyPress = async (e: KeyboardEvent<HTMLInputElement>) => {
+  const handleEmployeeIdKeyPress = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      ipadTagInputRef.current?.focus();
+    }
+  };
+
+  const handleIpadTagKeyPress = async (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       const tag = ipadTag.trim();
@@ -244,9 +298,9 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
     }
   };
 
-  // Focus the input when component mounts
+  // Focus the employee ID input when component mounts
   useEffect(() => {
-    ipadTagInputRef.current?.focus();
+    employeeIdInputRef.current?.focus();
   }, []);
 
   return (
@@ -268,9 +322,9 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
               <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-blue-500 to-blue-800 text-transparent bg-clip-text">
                 {`บันทึกการ${status} IPad`}
               </h1>
-              <div className="relative h-10 w-10 -mt-1">
+              <div className="relative h-15 w-15 -mt-1">
                 <Image 
-                  src="/R (1).jpg" 
+                  src="/R.png" 
                   alt="" 
                   fill
                   className="object-contain"
@@ -289,10 +343,13 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
             type="text"
             placeholder=""
             value={employeeId}
+            ref={employeeIdInputRef}
             onChange={(e: ChangeEvent<HTMLInputElement>) => setEmployeeId(e.target.value)}
-            onKeyPress={handleKeyPress}
+            onKeyDown={handleEmployeeIdKeyPress}
+            onKeyPress={handleEmployeeIdKeyPress}
             disabled={isSubmitting}
             className="w-full px-4 py-3 border-2 border-blue-200 rounded-lg focus:border-blue-500 focus:outline-none transition-colors disabled:opacity-70"
+            autoComplete="off"
           />
         </div>
         <div className="mb-4">
@@ -313,7 +370,7 @@ export default function LogForm({ status, onSuccess }: LogFormProps) {
               placeholder=""
               value={ipadTag}
               onChange={handleIpadTagChange}
-              onKeyPress={handleKeyPress}
+              onKeyPress={handleIpadTagKeyPress}
               onKeyDown={handleKeyDown}
               disabled={isSubmitting}
               className={`w-full px-4 py-3 border-2 rounded-lg focus:outline-none transition-colors disabled:opacity-70 ${

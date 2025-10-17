@@ -647,7 +647,7 @@ export default function IPadTrackingSystem() {
               </div>
               <div>
                 <h1 className="text-3xl md:text-4xl font-bold text-white mb-1">IPad Tracking System</h1>
-                <p className="text-blue-100 text-lg">โรงพยาบาลรามคำแหง - ระบบบันทึกการส่งเข้า/ออกอุปกรณ์</p>
+                <p className="text-blue-100 text-lg">โรงพยาบาลรามคำแหง - ระบบบันทึกการส่งเข้า/ออกไอแพด</p>
               </div>
             </div>
             <div className="w-32 h-32">
