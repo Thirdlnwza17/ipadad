@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PASSWORD = process.env.ACCESS_PASSWORD || "123456";
+const PASSWORD = process.env.ACCESS_PASSWORD || "Ram#10240";
 
 function unauthorized() {
   return new NextResponse("รหัสผ่านไม่ถูกต้อง", {
